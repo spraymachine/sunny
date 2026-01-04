@@ -95,6 +95,46 @@ Tables:
 - No service role key in frontend
 - Protected routes with auth guards
 
+## 🌐 GitHub Pages Deployment
+
+The app is configured to deploy automatically to GitHub Pages when you push to the `main` branch.
+
+### Setup Steps:
+
+1. **Enable GitHub Pages**:
+   - Go to your GitHub repo: `https://github.com/spraymachine/sunny`
+   - Navigate to **Settings** → **Pages**
+   - Under **Source**, select **GitHub Actions**
+   - Save the settings
+
+2. **Configure Environment Variables** (for GitHub Pages):
+   - Go to **Settings** → **Secrets and variables** → **Actions**
+   - Add these repository secrets:
+     - `VITE_SUPABASE_URL` - Your Supabase project URL
+     - `VITE_SUPABASE_ANON_KEY` - Your Supabase anon key
+   
+   **Note**: Since GitHub Pages is a static site, you'll need to set these as build-time environment variables. The GitHub Actions workflow will use them during the build process.
+
+3. **Update GitHub Actions Workflow** (if needed):
+   - The workflow file is at `.github/workflows/deploy.yml`
+   - It will automatically build and deploy on every push to `main`
+
+4. **Your app will be live at**:
+   ```
+   https://spraymachine.github.io/sunny/
+   ```
+
+### Manual Deployment (Alternative):
+
+If you prefer manual deployment:
+
+```bash
+npm run build
+# Then use gh-pages or manually upload dist folder
+```
+
+**Important**: Make sure your `.env` variables are set as GitHub Secrets if using GitHub Actions, or configure them in your build process.
+
 ## 🐛 Troubleshooting
 
 **Blank screen?**
