@@ -37,6 +37,18 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: npm run build
 
+      - name: Verify build output
+        run: |
+          echo "Checking if index.html exists..."
+          ls -la dist/
+          echo ""
+          echo "Checking if assets directory exists..."
+          ls -la dist/assets/ 2>/dev/null || echo "No assets directory found"
+          echo ""
+          echo "Checking index.html for asset paths..."
+          grep -o 'src="[^"]*"' dist/index.html | head -5 || echo "No src attributes found"
+          grep -o 'href="[^"]*"' dist/index.html | head -5 || echo "No href attributes found"
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
 

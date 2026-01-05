@@ -2,7 +2,37 @@
 
 ## Common Issues and Solutions
 
-### 1. Blank Screen After Deployment
+### 1. Blank Screen with 404 Errors
+
+**This is usually caused by incorrect asset paths.**
+
+#### Quick Fix Steps:
+
+1. **Check what's actually failing**:
+   - Open browser DevTools (F12)
+   - Go to **Network** tab
+   - Refresh the page
+   - Look for red (404) requests
+   - Note which files are failing (e.g., `index.js`, `index.css`, `vite.svg`)
+
+2. **Verify the built HTML**:
+   - After GitHub Actions completes, check the built files
+   - The `dist/index.html` should have paths like `/sunny/assets/index-xxx.js`
+   - NOT paths like `/assets/index-xxx.js` or `/src/main.jsx`
+
+3. **Common Issues**:
+   - **If paths are missing `/sunny/`**: The build didn't use the base path correctly
+   - **If you see `/src/main.jsx`**: The build didn't complete or failed
+   - **If assets are 404**: GitHub Pages might not be serving from the right directory
+
+#### Solution:
+
+Make sure:
+- ✅ `vite.config.js` has `base: '/sunny/'`
+- ✅ GitHub Actions build completed successfully
+- ✅ Check the Actions logs to see if build had errors
+
+### 2. Blank Screen After Deployment
 
 **Possible Causes:**
 
