@@ -21,7 +21,7 @@ export const router = createBrowserRouter([
     children: [
       {
         index: true,
-        element: <Navigate to="/login" replace />,
+        element: <Navigate to="login" replace />,
       },
       {
         path: 'sales',
@@ -39,7 +39,7 @@ export const router = createBrowserRouter([
   },
   {
     path: '*',
-    element: <Navigate to="/login" replace />,
+    element: <Navigate to="login" replace />,
   },
 ], {
   basename: '/sunny',
