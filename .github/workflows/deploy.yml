@@ -35,19 +35,42 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-        run: npm run build
+        run: |
+          echo "Starting build..."
+          npm run build || (echo "Build failed!" && exit 1)
+          echo "Build completed successfully"
 
       - name: Verify build output
         run: |
+          echo "=== Build Verification ==="
+          echo "Checking if dist directory exists..."
+          ls -la dist/ || echo "ERROR: dist directory not found!"
+          echo ""
           echo "Checking if index.html exists..."
-          ls -la dist/
+          if [ -f dist/index.html ]; then
+            echo "✅ index.html found"
+            echo ""
+            echo "Checking index.html content (first 30 lines)..."
+            head -30 dist/index.html
+            echo ""
+            echo "Checking for /src/main.jsx (should NOT exist in built file)..."
+            if grep -q '/src/main.jsx' dist/index.html; then
+              echo "❌ ERROR: Built HTML still contains /src/main.jsx - build failed!"
+              exit 1
+            else
+              echo "✅ No /src/main.jsx found (good - build processed correctly)"
+            fi
+            echo ""
+            echo "Checking for asset paths (should include /sunny/)..."
+            grep -o 'src="[^"]*"' dist/index.html | head -3
+            grep -o 'href="[^"]*"' dist/index.html | head -3
+          else
+            echo "❌ ERROR: dist/index.html not found!"
+            exit 1
+          fi
           echo ""
-          echo "Checking if assets directory exists..."
-          ls -la dist/assets/ 2>/dev/null || echo "No assets directory found"
-          echo ""
-          echo "Checking index.html for asset paths..."
-          grep -o 'src="[^"]*"' dist/index.html | head -5 || echo "No src attributes found"
-          grep -o 'href="[^"]*"' dist/index.html | head -5 || echo "No href attributes found"
+          echo "Checking assets directory..."
+          ls -la dist/assets/ 2>/dev/null || echo "⚠️  No assets directory (might be normal if no assets)"
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
