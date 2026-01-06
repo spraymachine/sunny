@@ -14,23 +14,23 @@ export default function Sales() {
   const [loading, setLoading] = useState(true)
   const [sortField, setSortField] = useState('units_sold')
   const [sortDirection, setSortDirection] = useState('desc')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [trainerFilter, setTrainerFilter] = useState('all')
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const [isAddTrainerModalOpen, setIsAddTrainerModalOpen] = useState(false)
   const [editingId, setEditingId] = useState(null)
+  const [editingTrainerId, setEditingTrainerId] = useState(null)
   const [formData, setFormData] = useState({
     trainer_id: '',
-    buyer_name: '',
-    buyer_contact: '',
     units_assigned: '',
-    units_sold: '',
-    margin_percentage: '',
-    incentive_amount: '',
-    expiry_date: '',
+    date_of_assignment: new Date().toISOString().split('T')[0], // Default to today
   })
+  const [isDateEditable, setIsDateEditable] = useState(false)
   const [trainerFormData, setTrainerFormData] = useState({
     name: '',
     contact: '',
     notes: '',
+    joining_date: new Date().toISOString().split('T')[0], // Default to today
   })
 
   useEffect(() => {
@@ -86,20 +86,23 @@ export default function Sales() {
       return
     }
 
+    if (!formData.units_assigned || parseInt(formData.units_assigned) <= 0) {
+      alert('Please enter units assigned')
+      return
+    }
+
     try {
+      const selectedTrainer = trainers.find(t => t.id === formData.trainer_id)
+      
       if (editingId) {
         // Update existing
         const { error } = await supabase
           .from('sales')
           .update({
             trainer_id: formData.trainer_id,
-            buyer_name: formData.buyer_name,
-            buyer_contact: formData.buyer_contact,
             units_assigned: parseInt(formData.units_assigned) || 0,
-            units_sold: parseInt(formData.units_sold) || 0,
-            margin_percentage: parseFloat(formData.margin_percentage) || 0,
-            incentive_amount: parseFloat(formData.incentive_amount) || 0,
-            expiry_date: formData.expiry_date,
+            units_sold: 0, // Reset to 0 on edit
+            date_of_assignment: formData.date_of_assignment,
           })
           .eq('id', editingId)
 
@@ -110,13 +113,9 @@ export default function Sales() {
           .from('sales')
           .insert([{
             trainer_id: formData.trainer_id,
-            buyer_name: formData.buyer_name,
-            buyer_contact: formData.buyer_contact,
             units_assigned: parseInt(formData.units_assigned) || 0,
-            units_sold: parseInt(formData.units_sold) || 0,
-            margin_percentage: parseFloat(formData.margin_percentage) || 0,
-            incentive_amount: parseFloat(formData.incentive_amount) || 0,
-            expiry_date: formData.expiry_date,
+            units_sold: 0,
+            date_of_assignment: formData.date_of_assignment,
           }])
 
         if (error) throw error
@@ -125,14 +124,10 @@ export default function Sales() {
       // Reset form and refresh data
       setFormData({
         trainer_id: '',
-        buyer_name: '',
-        buyer_contact: '',
         units_assigned: '',
-        units_sold: '',
-        margin_percentage: '',
-        incentive_amount: '',
-        expiry_date: '',
+        date_of_assignment: new Date().toISOString().split('T')[0],
       })
+      setIsDateEditable(false)
       setEditingId(null)
       setIsAddModalOpen(false)
       await fetchData()
@@ -145,14 +140,10 @@ export default function Sales() {
   const handleEdit = (sale) => {
     setFormData({
       trainer_id: sale.trainer_id,
-      buyer_name: sale.buyer_name,
-      buyer_contact: sale.buyer_contact,
       units_assigned: sale.units_assigned,
-      units_sold: sale.units_sold,
-      margin_percentage: sale.margin_percentage,
-      incentive_amount: sale.incentive_amount,
-      expiry_date: sale.expiry_date,
+      date_of_assignment: sale.date_of_assignment || sale.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
     })
+    setIsDateEditable(false)
     setEditingId(sale.id)
     setIsAddModalOpen(true)
   }
@@ -177,16 +168,47 @@ export default function Sales() {
   const handleCloseModal = () => {
     setIsAddModalOpen(false)
     setEditingId(null)
+    setIsDateEditable(false)
     setFormData({
       trainer_id: '',
-      buyer_name: '',
-      buyer_contact: '',
       units_assigned: '',
-      units_sold: '',
-      margin_percentage: '',
-      incentive_amount: '',
-      expiry_date: '',
+      date_of_assignment: new Date().toISOString().split('T')[0],
     })
+  }
+
+  const handleEditTrainer = (trainer) => {
+    setEditingTrainerId(trainer.id)
+    // Convert created_at to date string for the input field
+    const joiningDate = trainer.created_at 
+      ? new Date(trainer.created_at).toISOString().split('T')[0]
+      : new Date().toISOString().split('T')[0]
+    setTrainerFormData({
+      name: trainer.name || '',
+      contact: trainer.contact || '',
+      notes: trainer.notes || '',
+      joining_date: joiningDate,
+    })
+    setIsAddTrainerModalOpen(true)
+  }
+
+  const handleDeleteTrainer = async (id) => {
+    if (!confirm('Are you sure you want to delete this trainer? This action cannot be undone.')) {
+      return
+    }
+
+    try {
+      const { error } = await supabase
+        .from('trainers')
+        .delete()
+        .eq('id', id)
+
+      if (error) throw error
+
+      await fetchData()
+    } catch (error) {
+      console.error('Error deleting trainer:', error)
+      alert('Error deleting trainer: ' + error.message)
+    }
   }
 
   const handleSaveTrainer = async () => {
@@ -196,22 +218,46 @@ export default function Sales() {
     }
 
     try {
-      const { error } = await supabase
-        .from('trainers')
-        .insert([{
-          name: trainerFormData.name.trim(),
-          contact: trainerFormData.contact.trim() || null,
-          notes: trainerFormData.notes.trim() || null,
-        }])
+      // Convert joining_date to timestamp for created_at
+      const joiningTimestamp = trainerFormData.joining_date 
+        ? new Date(trainerFormData.joining_date).toISOString()
+        : new Date().toISOString()
 
-      if (error) throw error
+      if (editingTrainerId) {
+        // Update existing trainer (including created_at for joining date)
+        const { error } = await supabase
+          .from('trainers')
+          .update({
+            name: trainerFormData.name.trim(),
+            contact: trainerFormData.contact.trim() || null,
+            notes: trainerFormData.notes.trim() || null,
+            created_at: joiningTimestamp,
+          })
+          .eq('id', editingTrainerId)
+
+        if (error) throw error
+      } else {
+        // Insert new trainer
+        const { error } = await supabase
+          .from('trainers')
+          .insert([{
+            name: trainerFormData.name.trim(),
+            contact: trainerFormData.contact.trim() || null,
+            notes: trainerFormData.notes.trim() || null,
+            created_at: joiningTimestamp,
+          }])
+
+        if (error) throw error
+      }
 
       // Reset form and refresh data
       setTrainerFormData({
         name: '',
         contact: '',
         notes: '',
+        joining_date: new Date().toISOString().split('T')[0],
       })
+      setEditingTrainerId(null)
       setIsAddTrainerModalOpen(false)
       await fetchData()
     } catch (error) {
@@ -222,11 +268,28 @@ export default function Sales() {
 
   const handleCloseTrainerModal = () => {
     setIsAddTrainerModalOpen(false)
+    setEditingTrainerId(null)
     setTrainerFormData({
       name: '',
       contact: '',
       notes: '',
+      joining_date: new Date().toISOString().split('T')[0],
     })
+  }
+
+  const formatPhoneNumber = (contact) => {
+    if (!contact) return null
+    // Remove all non-digit characters except + for international numbers
+    return contact.replace(/[^\d+]/g, '')
+  }
+
+  const handleCallTrainer = (contact) => {
+    const phoneNumber = formatPhoneNumber(contact)
+    if (!phoneNumber) {
+      alert('No contact number available for this trainer')
+      return
+    }
+    window.location.href = `tel:${phoneNumber}`
   }
 
   const handleSort = (field) => {
@@ -238,13 +301,44 @@ export default function Sales() {
     }
   }
 
-  const sortedSales = [...sales].sort((a, b) => {
+  // Calculate total revenue: units_sold * unit_price (assuming ₹100 per unit)
+  const UNIT_PRICE = 100
+
+  // Calculate trainer statistics
+  const getTrainerStats = (trainerId) => {
+    const trainerSales = sales.filter(s => s.trainer_id === trainerId)
+    const totalUnits = trainerSales.reduce((sum, s) => sum + (s.units_assigned || 0), 0)
+    const totalRevenue = trainerSales.reduce((sum, s) => sum + ((s.units_sold || 0) * UNIT_PRICE), 0)
+    return { totalUnits, totalRevenue }
+  }
+
+  // Filter sales
+  const filteredSales = sales.filter((sale) => {
+    // Trainer filter
+    if (trainerFilter !== 'all' && sale.trainer_id !== trainerFilter) return false
+
+    // Search filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase()
+      const matchesTrainer = sale.trainers?.name?.toLowerCase().includes(query)
+      const matchesBuyer = sale.buyer_name?.toLowerCase().includes(query)
+      const matchesContact = sale.buyer_contact?.toLowerCase().includes(query)
+      if (!matchesTrainer && !matchesBuyer && !matchesContact) return false
+    }
+
+    return true
+  })
+
+  const sortedSales = [...filteredSales].sort((a, b) => {
     let aVal = a[sortField]
     let bVal = b[sortField]
     
     if (sortField === 'trainer_name') {
       aVal = a.trainers?.name || ''
       bVal = b.trainers?.name || ''
+    } else if (sortField === 'revenue') {
+      aVal = (a.units_sold || 0) * UNIT_PRICE
+      bVal = (b.units_sold || 0) * UNIT_PRICE
     }
     
     if (typeof aVal === 'string') {
@@ -259,7 +353,7 @@ export default function Sales() {
   // Calculate KPIs
   const totalUnitsSold = sales.reduce((sum, s) => sum + (s.units_sold || 0), 0)
   const totalUnitsAssigned = sales.reduce((sum, s) => sum + (s.units_assigned || 0), 0)
-  const totalIncentives = sales.reduce((sum, s) => sum + (s.incentive_amount || 0), 0)
+  const totalRevenue = sales.reduce((sum, s) => sum + ((s.units_sold || 0) * UNIT_PRICE), 0)
   const avgMargin = sales.length > 0 
     ? (sales.reduce((sum, s) => sum + (s.margin_percentage || 0), 0) / sales.length).toFixed(1)
     : 0
@@ -324,12 +418,15 @@ export default function Sales() {
       ),
     },
     {
-      key: 'incentive_amount',
-      label: 'Incentive',
+      key: 'revenue',
+      label: 'Revenue',
       sortable: true,
-      render: (value) => (
-        <span className="font-mono text-amber-400">₹{(value || 0).toLocaleString()}</span>
-      ),
+      render: (_, row) => {
+        const revenue = (row.units_sold || 0) * UNIT_PRICE
+        return (
+          <span className="font-mono text-emerald-400">₹{revenue.toLocaleString()}</span>
+        )
+      },
     },
     {
       key: 'expiry_date',
@@ -362,12 +459,6 @@ export default function Sales() {
             className="px-3 py-1 text-xs bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 rounded transition-colors"
           >
             Edit
-          </button>
-          <button
-            onClick={() => handleDelete(row.id)}
-            className="px-3 py-1 text-xs bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 rounded transition-colors"
-          >
-            Delete
           </button>
         </div>
       ),
@@ -460,9 +551,9 @@ export default function Sales() {
           }
         />
         <KPICard
-          title="Total Incentives"
-          value={`₹${totalIncentives.toLocaleString()}`}
-          color="amber"
+          title="Total Revenue"
+          value={`₹${totalRevenue.toLocaleString()}`}
+          color="emerald"
           icon={
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -541,7 +632,6 @@ export default function Sales() {
                 </div>
                 <div className="text-right">
                   <p className="font-semibold text-emerald-400">{trainer.total_units_sold} sold</p>
-                  <p className="text-xs text-slate-500">₹{trainer.total_incentive?.toLocaleString() || 0}</p>
                 </div>
               </div>
             ))}
@@ -552,10 +642,148 @@ export default function Sales() {
         </div>
       </div>
 
+      {/* Trainers Table */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden mb-8">
+        <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-white">Trainers</h3>
+          <span className="text-sm text-slate-500">
+            {trainers.length} trainer{trainers.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-slate-800/50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Trainer</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Joining Date</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Total Units</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Total Revenue</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Notes</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800">
+              {trainers.map((trainer) => {
+                const stats = getTrainerStats(trainer.id)
+                return (
+                  <tr key={trainer.id} className="hover:bg-slate-800/30 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div>
+                        <p className="font-medium text-white">{trainer.name}</p>
+                        <p className="text-xs text-slate-500">{trainer.contact || 'N/A'}</p>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <p className="text-slate-400">
+                        {trainer.created_at ? new Date(trainer.created_at).toLocaleDateString() : 'N/A'}
+                      </p>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <p className="font-mono font-semibold text-emerald-400">{stats.totalUnits.toLocaleString()}</p>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <p className="font-mono font-semibold text-emerald-400">₹{stats.totalRevenue.toLocaleString()}</p>
+                    </td>
+                    <td className="px-6 py-4">
+                      <p className="text-slate-400 text-sm max-w-md truncate">{trainer.notes || 'N/A'}</p>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        {trainer.contact && (
+                          <button
+                            onClick={() => handleCallTrainer(trainer.contact)}
+                            className="px-3 py-1 text-xs bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded transition-colors flex items-center gap-1"
+                            title={`Call ${trainer.contact}`}
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                            </svg>
+                            Call
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleEditTrainer(trainer)}
+                          className="px-3 py-1 text-xs bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 rounded transition-colors"
+                        >
+                          Edit
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+              {trainers.length === 0 && (
+                <tr>
+                  <td colSpan="6" className="px-6 py-8 text-center text-slate-500">
+                    No trainers found. Click "Add Trainer" to create one.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-6">
+        <div className="flex flex-wrap items-center gap-4">
+          {/* Search */}
+          <div className="flex-1 min-w-[200px]">
+            <div className="relative">
+              <svg
+                className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                placeholder="Search by trainer, buyer, or contact..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              />
+            </div>
+          </div>
+
+          {/* Trainer Filter */}
+          <select
+            value={trainerFilter}
+            onChange={(e) => setTrainerFilter(e.target.value)}
+            className="px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="all">All Trainers</option>
+            {trainers.map((trainer) => (
+              <option key={trainer.id} value={trainer.id}>
+                {trainer.name}
+              </option>
+            ))}
+          </select>
+
+          {/* Clear Filters */}
+          {(searchQuery || trainerFilter !== 'all') && (
+            <button
+              onClick={() => {
+                setSearchQuery('')
+                setTrainerFilter('all')
+              }}
+              className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Sales Table */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-800">
+        <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
           <h3 className="text-lg font-semibold text-white">Sales Records</h3>
+          <span className="text-sm text-slate-500">
+            Showing {sortedSales.length} of {sales.length} sales
+          </span>
         </div>
         <DataTable
           columns={columns}
@@ -587,56 +815,88 @@ export default function Sales() {
             options={trainers.map((t) => ({ value: t.id, label: t.name }))}
             required
           />
-          <FormField
-            label="Buyer Name"
-            value={formData.buyer_name}
-            onChange={(value) => setFormData({ ...formData, buyer_name: value })}
-            placeholder="Enter buyer name"
-          />
-          <FormField
-            label="Buyer Contact"
-            value={formData.buyer_contact}
-            onChange={(value) => setFormData({ ...formData, buyer_contact: value })}
-            placeholder="Enter contact number"
-          />
+          
+          {/* Trainer Contact (display only) */}
+          {formData.trainer_id && (
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Trainer Contact
+              </label>
+              <div className="px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-400">
+                {trainers.find(t => t.id === formData.trainer_id)?.contact || 'N/A'}
+              </div>
+            </div>
+          )}
+
           <FormField
             label="Units Assigned"
             type="number"
             value={formData.units_assigned}
             onChange={(value) => setFormData({ ...formData, units_assigned: value })}
             placeholder="0"
-          />
-          <FormField
-            label="Units Sold"
-            type="number"
-            value={formData.units_sold}
-            onChange={(value) => setFormData({ ...formData, units_sold: value })}
-            placeholder="0"
-          />
-          <FormField
-            label="Margin (%)"
-            type="number"
-            value={formData.margin_percentage}
-            onChange={(value) => setFormData({ ...formData, margin_percentage: value })}
-            placeholder="0"
-            step="0.01"
-          />
-          <FormField
-            label="Incentive Amount (₹)"
-            type="number"
-            value={formData.incentive_amount}
-            onChange={(value) => setFormData({ ...formData, incentive_amount: value })}
-            placeholder="0"
-            step="0.01"
-          />
-          <FormField
-            label="Expiry Date"
-            type="date"
-            value={formData.expiry_date}
-            onChange={(value) => setFormData({ ...formData, expiry_date: value })}
+            required
           />
 
+          {/* Date of Assignment with Edit Button */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-slate-300 mb-2">
+              Date of Assignment
+            </label>
+            <div className="flex items-center gap-2">
+              {isDateEditable ? (
+                <>
+                  <input
+                    type="date"
+                    value={formData.date_of_assignment}
+                    onChange={(e) => setFormData({ ...formData, date_of_assignment: e.target.value })}
+                    className="flex-1 px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setIsDateEditable(false)}
+                    className="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
+                    title="Save date"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="flex-1 px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-300">
+                    {formData.date_of_assignment ? new Date(formData.date_of_assignment).toLocaleDateString() : 'N/A'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsDateEditable(true)}
+                    className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"
+                    title="Edit date"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
           <div className="flex gap-3 mt-6">
+            {editingId && (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (confirm('Are you sure you want to delete this sale?')) {
+                    await handleDelete(editingId)
+                    handleCloseModal()
+                  }
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg transition-colors font-medium"
+              >
+                Delete
+              </button>
+            )}
             <button
               type="button"
               onClick={handleCloseModal}
@@ -658,7 +918,7 @@ export default function Sales() {
       <Modal
         isOpen={isAddTrainerModalOpen}
         onClose={handleCloseTrainerModal}
-        title="Add New Trainer"
+        title={editingTrainerId ? "Edit Trainer" : "Add New Trainer"}
       >
         <form
           onSubmit={(e) => {
@@ -680,6 +940,12 @@ export default function Sales() {
             placeholder="Enter contact number or email"
           />
           <FormField
+            label="Joining Date"
+            type="date"
+            value={trainerFormData.joining_date}
+            onChange={(value) => setTrainerFormData({ ...trainerFormData, joining_date: value })}
+          />
+          <FormField
             label="Notes"
             type="textarea"
             value={trainerFormData.notes}
@@ -688,6 +954,20 @@ export default function Sales() {
           />
 
           <div className="flex gap-3 mt-6">
+            {editingTrainerId && (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (confirm('Are you sure you want to delete this trainer? This action cannot be undone.')) {
+                    await handleDeleteTrainer(editingTrainerId)
+                    handleCloseTrainerModal()
+                  }
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg transition-colors font-medium"
+              >
+                Delete
+              </button>
+            )}
             <button
               type="button"
               onClick={handleCloseTrainerModal}
@@ -699,7 +979,7 @@ export default function Sales() {
               type="submit"
               className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors font-medium"
             >
-              Add Trainer
+              {editingTrainerId ? 'Update' : 'Add'} Trainer
             </button>
           </div>
         </form>

@@ -63,3 +63,4 @@ All data persists in Supabase and is protected by RLS policies.
 - Debug logs can be removed from AuthContext when ready
 
 
+

@@ -20,6 +20,7 @@ export default function Leads() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [trainerFilter, setTrainerFilter] = useState('all')
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
+  const [editingLeadId, setEditingLeadId] = useState(null)
   const [leadFormData, setLeadFormData] = useState({
     trainer_id: '',
     trainer_contact: '',
@@ -92,6 +93,38 @@ export default function Leads() {
   const lostLeads = leads.filter(l => l.status === 'lost').length
   const conversionRate = totalLeads > 0 ? ((convertedLeads / totalLeads) * 100).toFixed(1) : 0
 
+  const handleEditLead = (lead) => {
+    setEditingLeadId(lead.id)
+    setLeadFormData({
+      trainer_id: lead.trainer_id || '',
+      trainer_contact: lead.trainer_contact || lead.trainers?.contact || '',
+      buyer_name: lead.buyer_name || '',
+      buyer_contact: lead.buyer_contact || '',
+      status: lead.status || 'new',
+    })
+    setIsAddModalOpen(true)
+  }
+
+  const handleDeleteLead = async (id) => {
+    if (!confirm('Are you sure you want to delete this lead? This action cannot be undone.')) {
+      return
+    }
+
+    try {
+      const { error } = await supabase
+        .from('leads')
+        .delete()
+        .eq('id', id)
+
+      if (error) throw error
+
+      await fetchData()
+    } catch (error) {
+      console.error('Error deleting lead:', error)
+      alert('Error deleting lead: ' + error.message)
+    }
+  }
+
   const handleSaveLead = async () => {
     if (!leadFormData.trainer_id) {
       alert('Please select a trainer')
@@ -104,17 +137,34 @@ export default function Leads() {
     }
 
     try {
-      const { error } = await supabase
-        .from('leads')
-        .insert([{
-          trainer_id: leadFormData.trainer_id,
-          trainer_contact: leadFormData.trainer_contact.trim() || null,
-          buyer_name: leadFormData.buyer_name.trim(),
-          buyer_contact: leadFormData.buyer_contact.trim() || null,
-          status: leadFormData.status,
-        }])
+      if (editingLeadId) {
+        // Update existing lead
+        const { error } = await supabase
+          .from('leads')
+          .update({
+            trainer_id: leadFormData.trainer_id,
+            trainer_contact: leadFormData.trainer_contact.trim() || null,
+            buyer_name: leadFormData.buyer_name.trim(),
+            buyer_contact: leadFormData.buyer_contact.trim() || null,
+            status: leadFormData.status,
+          })
+          .eq('id', editingLeadId)
 
-      if (error) throw error
+        if (error) throw error
+      } else {
+        // Insert new lead
+        const { error } = await supabase
+          .from('leads')
+          .insert([{
+            trainer_id: leadFormData.trainer_id,
+            trainer_contact: leadFormData.trainer_contact.trim() || null,
+            buyer_name: leadFormData.buyer_name.trim(),
+            buyer_contact: leadFormData.buyer_contact.trim() || null,
+            status: leadFormData.status,
+          }])
+
+        if (error) throw error
+      }
 
       // Reset form and refresh data
       setLeadFormData({
@@ -124,6 +174,7 @@ export default function Leads() {
         buyer_contact: '',
         status: 'new',
       })
+      setEditingLeadId(null)
       setIsAddModalOpen(false)
       await fetchData()
     } catch (error) {
@@ -134,6 +185,7 @@ export default function Leads() {
 
   const handleCloseModal = () => {
     setIsAddModalOpen(false)
+    setEditingLeadId(null)
     setLeadFormData({
       trainer_id: '',
       trainer_contact: '',
@@ -154,6 +206,21 @@ export default function Leads() {
         {status?.charAt(0).toUpperCase() + status?.slice(1)}
       </span>
     )
+  }
+
+  const formatPhoneNumber = (contact) => {
+    if (!contact) return null
+    // Remove all non-digit characters except + for international numbers
+    return contact.replace(/[^\d+]/g, '')
+  }
+
+  const handleCall = (contact) => {
+    const phoneNumber = formatPhoneNumber(contact)
+    if (!phoneNumber) {
+      alert('No contact number available for this lead')
+      return
+    }
+    window.location.href = `tel:${phoneNumber}`
   }
 
   const columns = [
@@ -189,6 +256,32 @@ export default function Leads() {
         <span className="text-slate-400">
           {value ? new Date(value).toLocaleDateString() : 'N/A'}
         </span>
+      ),
+    },
+    {
+      key: 'actions',
+      label: 'Actions',
+      render: (_, row) => (
+        <div className="flex items-center gap-2">
+          {row.buyer_contact && (
+            <button
+              onClick={() => handleCall(row.buyer_contact)}
+              className="px-3 py-1 text-xs bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded transition-colors flex items-center gap-1"
+              title={`Call ${row.buyer_contact}`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+              </svg>
+              Call
+            </button>
+          )}
+          <button
+            onClick={() => handleEditLead(row)}
+            className="px-3 py-1 text-xs bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 rounded transition-colors"
+          >
+            Edit
+          </button>
+        </div>
       ),
     },
   ]
@@ -391,11 +484,11 @@ export default function Leads() {
         <DataTable columns={columns} data={filteredLeads} />
       </div>
 
-      {/* Add Lead Modal */}
+      {/* Add/Edit Lead Modal */}
       <Modal
         isOpen={isAddModalOpen}
         onClose={handleCloseModal}
-        title="Add New Lead"
+        title={editingLeadId ? "Edit Lead" : "Add New Lead"}
       >
         <form
           onSubmit={(e) => {
@@ -450,6 +543,20 @@ export default function Leads() {
           />
 
           <div className="flex gap-3 mt-6">
+            {editingLeadId && (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (confirm('Are you sure you want to delete this lead? This action cannot be undone.')) {
+                    await handleDeleteLead(editingLeadId)
+                    handleCloseModal()
+                  }
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg transition-colors font-medium"
+              >
+                Delete
+              </button>
+            )}
             <button
               type="button"
               onClick={handleCloseModal}
@@ -461,7 +568,7 @@ export default function Leads() {
               type="submit"
               className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors font-medium"
             >
-              Add Lead
+              {editingLeadId ? 'Update' : 'Add'} Lead
             </button>
           </div>
         </form>
