@@ -6,6 +6,37 @@ const AuthContext = createContext({})
 export const useAuth = () => useContext(AuthContext)
 
 export function AuthProvider({ children }) {
+  // ============================================
+  // 🚨 BYPASS MODE - Change email below to test different users
+  // Set BYPASS_MODE to false to use real authentication
+  // ============================================
+  const BYPASS_MODE = false; // Set to true to enable bypass
+  const MOCK_USER_EMAIL = 'sales@gmail.com'; // Change to 'sunny@gmail.com' or 'sales@gmail.com'
+  
+  if (BYPASS_MODE) {
+    const mockRole = MOCK_USER_EMAIL === 'sales@gmail.com' ? 'sales' : 'admin';
+    return (
+      <AuthContext.Provider value={{
+        user: { id: `mock-${mockRole}-id`, email: MOCK_USER_EMAIL },
+        profile: { 
+          id: `mock-${mockRole}-id`, 
+          email: MOCK_USER_EMAIL, 
+          full_name: mockRole === 'sales' ? 'Sales Executive' : 'Admin User', 
+          role: mockRole 
+        },
+        role: mockRole,
+        loading: false,
+        signIn: async () => ({ data: { user: {} }, error: null }),
+        signOut: async () => ({ error: null }),
+      }}>
+        {children}
+      </AuthContext.Provider>
+    )
+  }
+  // ============================================
+  // END BYPASS MODE - Real authentication below
+  // ============================================
+
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -14,6 +45,7 @@ export function AuthProvider({ children }) {
   const profileFetchInFlightRef = useRef(false)
   const getSessionInFlightRef = useRef(null)
   const fetchProfileInFlightRef = useRef(null)
+  const isRestoringSessionRef = useRef(false)
 
   useEffect(() => {
     let isMounted = true
@@ -80,6 +112,15 @@ export function AuthProvider({ children }) {
         const newUserId = session?.user?.id ?? null
         const previousUserId = currentUserIdRef.current
 
+        // Skip profile fetches during session restoration to avoid race conditions
+        // Check both ref and window flag (window flag is set from Onboarding component)
+        const isRestoring = isRestoringSessionRef.current || (typeof window !== 'undefined' && window.__isRestoringSession)
+        if (isRestoring) {
+          // Still update user object but don't fetch profile
+          setUser(session?.user ?? null)
+          return
+        }
+
         // If tab is hidden, don't kick the UI back into loading or start network calls.
         if (typeof document !== 'undefined' && document.hidden) {
           setUser(session?.user ?? null)
@@ -105,7 +146,12 @@ export function AuthProvider({ children }) {
         
         if (session?.user) {
           // Only show loading and fetch profile if user changed or we don't have profile
-          if (newUserId !== previousUserId || profileRef.current === null) {
+          // Also skip if we're already fetching for this user
+          const isDifferentUser = newUserId !== previousUserId
+          const needsProfile = profileRef.current === null || profileRef.current.id !== newUserId
+          const notAlreadyFetching = !profileFetchInFlightRef.current || currentUserIdRef.current !== newUserId
+          
+          if ((isDifferentUser || needsProfile) && notAlreadyFetching) {
             currentUserIdRef.current = newUserId
             setLoading(true)
             await fetchProfile(session.user.id)
@@ -135,39 +181,49 @@ export function AuthProvider({ children }) {
 
     try {
       profileFetchInFlightRef.current = true
-      // Single-flight profile fetch to avoid races across initAuth + onAuthStateChange
-      if (!fetchProfileInFlightRef.current) {
-        const thenable = supabase
+      
+      // Create a fresh query (don't reuse promises - they might be stuck)
+      const profileQuery = supabase
           .from('profiles')
           .select('*')
           .eq('id', userId)
           .single()
-        // Supabase query builders are Promise-like but may not implement .finally()
-        const p = Promise.resolve(thenable)
-        fetchProfileInFlightRef.current = p
-        p.finally(() => {
-          if (fetchProfileInFlightRef.current === p) fetchProfileInFlightRef.current = null
-        }).catch(() => {})
-      }
-      const profilePromise = fetchProfileInFlightRef.current
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('fetchProfile timeout after 8000ms')), 8000))
-      const { data, error } = await Promise.race([profilePromise, timeoutPromise])
+      
+      // Use a shorter timeout and retry logic
+      const timeoutMs = 5000
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error(`fetchProfile timeout after ${timeoutMs}ms`)), timeoutMs)
+      )
+      
+      const { data, error } = await Promise.race([profileQuery, timeoutPromise])
 
       if (error) {
+        // If profile doesn't exist (PGRST116), that's okay - it might be created by trigger
+        if (error.code === 'PGRST116') {
+          console.warn('Profile not found, may be created by trigger:', error.message)
+          profileRef.current = null
+          setProfile(null)
+        } else {
         console.warn('Profile query error:', error.message)
         profileRef.current = null
         setProfile(null)
+        }
       } else {
         profileRef.current = data
         setProfile(data)
       }
     } catch (error) {
       console.error('Error fetching profile:', error)
+      // Don't set profile to null on timeout - might be a temporary issue
+      // Only clear if it's a real error (not timeout)
+      if (!error.message.includes('timeout')) {
       fetchProfileInFlightRef.current = null
       profileRef.current = null
       setProfile(null)
+      }
     } finally {
       profileFetchInFlightRef.current = false
+      fetchProfileInFlightRef.current = null
       setLoading(false)
     }
   }
@@ -192,13 +248,21 @@ export function AuthProvider({ children }) {
     return { error }
   }
 
-  const isAdmin = profile?.role === 'admin'
+  const role = profile?.role || null
+  const isAdmin = role === 'admin'
+  const isSales = role === 'sales'
+  const isPartner = role === 'partner'
+  const isAdminOrSales = isAdmin || isSales
 
   const value = {
     user,
     profile,
+    role,
     loading,
     isAdmin,
+    isSales,
+    isPartner,
+    isAdminOrSales,
     signIn,
     signOut,
   }

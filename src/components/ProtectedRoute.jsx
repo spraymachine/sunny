@@ -1,8 +1,9 @@
+import React from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
-export default function ProtectedRoute({ children }) {
-  const { user, profile, isAdmin, loading } = useAuth()
+export default function ProtectedRoute({ children, requiredRole = null, allowedRoles = null }) {
+  const { user, profile, role, loading } = useAuth()
   const location = useLocation()
 
   // Check if Supabase is configured
@@ -14,7 +15,29 @@ export default function ProtectedRoute({ children }) {
   }
 
   // Wait for auth to finish loading
-  if (loading) {
+  // Also wait a bit if we just finished restoring a session (to allow profile to load)
+  const [isRestoringSession, setIsRestoringSession] = React.useState(
+    typeof window !== 'undefined' && window.__isRestoringSession
+  )
+  
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return
+    
+    // Check periodically if restoration is in progress
+    const interval = setInterval(() => {
+      const currentlyRestoring = window.__isRestoringSession
+      if (currentlyRestoring !== isRestoringSession) {
+        setIsRestoringSession(currentlyRestoring)
+      }
+    }, 50)
+    
+    return () => clearInterval(interval)
+  }, [isRestoringSession])
+  
+  // If loading or restoring session, show loading spinner
+  // Also show loading if user exists but profile doesn't match (might be transitioning)
+  const profileMismatch = user && profile && profile.id !== user.id
+  if (loading || isRestoringSession || profileMismatch) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
@@ -68,8 +91,21 @@ export default function ProtectedRoute({ children }) {
     )
   }
 
-  // Check admin status only after profile has loaded
-  if (profile !== null && !isAdmin) {
+  // Check role-based access
+  if (profile !== null) {
+    let hasAccess = true
+
+    if (requiredRole) {
+      hasAccess = role === requiredRole
+    } else if (allowedRoles && Array.isArray(allowedRoles)) {
+      hasAccess = allowedRoles.includes(role)
+    }
+
+    if (!hasAccess) {
+      const requiredText = allowedRoles 
+        ? `Required roles: ${allowedRoles.join(' or ')}`
+        : `Required role: ${requiredRole}`
+      
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
         <div className="bg-slate-900 border border-rose-500/30 rounded-xl p-8 max-w-md text-center">
@@ -79,7 +115,9 @@ export default function ProtectedRoute({ children }) {
             </svg>
           </div>
           <h2 className="text-xl font-semibold text-white mb-2">Access Denied</h2>
-          <p className="text-slate-400 mb-6">You don't have admin privileges to access this dashboard.</p>
+            <p className="text-slate-400 mb-6">
+              You don't have the required privileges to access this page. {requiredText}
+            </p>
           <button
             onClick={() => window.location.href = '/login'}
             className="px-6 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors"
@@ -90,11 +128,10 @@ export default function ProtectedRoute({ children }) {
       </div>
     )
   }
+  }
 
-  // Allow access if:
-  // 1. User is authenticated AND
-  // 2. (Profile is null - RLS issue, allow temporarily) OR (Profile exists and isAdmin is true)
-  // This prevents the timeout issue while still maintaining security
+  // Allow access if user is authenticated and profile is loaded
+  // RLS policies on the backend will enforce actual data access
   return children
 }
 

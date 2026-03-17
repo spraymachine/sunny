@@ -1,24 +1,24 @@
 export default function AlertBanner({ type = 'warning', title, message, onDismiss }) {
   const styles = {
     warning: {
-      bg: 'bg-amber-500/10 border-amber-500/30',
-      icon: 'text-amber-400',
-      title: 'text-amber-400',
+      bg: 'border-amber-300/18 bg-amber-400/8',
+      icon: 'text-amber-200',
+      title: 'text-amber-100',
     },
     error: {
-      bg: 'bg-rose-500/10 border-rose-500/30',
-      icon: 'text-rose-400',
-      title: 'text-rose-400',
+      bg: 'border-rose-300/18 bg-rose-400/8',
+      icon: 'text-rose-200',
+      title: 'text-rose-100',
     },
     success: {
-      bg: 'bg-emerald-500/10 border-emerald-500/30',
-      icon: 'text-emerald-400',
-      title: 'text-emerald-400',
+      bg: 'border-emerald-300/18 bg-emerald-400/8',
+      icon: 'text-emerald-100',
+      title: 'text-emerald-100',
     },
     info: {
-      bg: 'bg-indigo-500/10 border-indigo-500/30',
-      icon: 'text-indigo-400',
-      title: 'text-indigo-400',
+      bg: 'border-indigo-300/18 bg-indigo-400/8',
+      icon: 'text-indigo-100',
+      title: 'text-indigo-100',
     },
   }
 
@@ -48,8 +48,8 @@ export default function AlertBanner({ type = 'warning', title, message, onDismis
   }
 
   return (
-    <div className={`${style.bg} border rounded-lg p-4 flex items-start gap-3`}>
-      <div className={style.icon}>{icons[type]}</div>
+    <div className={`${style.bg} flex items-start gap-3 rounded-[24px] border p-4 shadow-[0_20px_45px_rgba(2,6,23,0.2)] backdrop-blur-xl`}>
+      <div className={`flex h-10 w-10 items-center justify-center rounded-2xl bg-white/[0.05] ${style.icon}`}>{icons[type]}</div>
       <div className="flex-1">
         <h4 className={`font-semibold ${style.title}`}>{title}</h4>
         {message && <p className="text-slate-400 text-sm mt-1">{message}</p>}
@@ -57,7 +57,7 @@ export default function AlertBanner({ type = 'warning', title, message, onDismis
       {onDismiss && (
         <button
           onClick={onDismiss}
-          className="text-slate-500 hover:text-white transition-colors"
+          className="text-slate-500 transition-colors hover:text-white"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -67,4 +67,3 @@ export default function AlertBanner({ type = 'warning', title, message, onDismis
     </div>
   )
 }
-

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { supabase } from '../lib/supabase'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -11,7 +12,7 @@ export default function Login() {
   const navigate = useNavigate()
   const location = useLocation()
 
-  const from = location.state?.from?.pathname || '/sales'
+  const from = location.state?.from?.pathname || '/overview'
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -25,12 +26,41 @@ export default function Login() {
       } else {
         // After successful login, check if profile exists
         const userId = data?.user?.id
-        console.log('[LOGIN] User logged in, ID:', userId)
         
         if (userId) {
-          // Give it a moment for the auth state to update
-          setTimeout(() => {
-            navigate(from, { replace: true })
+          // Give it a moment for the auth state to update, then redirect based on role
+          setTimeout(async () => {
+            // Fetch profile to determine role
+            const { data: profileData, error: profileError } = await supabase
+              .from('profiles')
+              .select('role')
+              .eq('id', userId)
+              .single()
+            
+            if (profileError) {
+              console.error('Profile fetch error:', profileError)
+              // If profile doesn't exist or RLS blocks access, show error
+              if (profileError.code === 'PGRST116') {
+                setError('Profile not found. Please contact administrator to create your profile.')
+              } else if (profileError.message.includes('permission') || profileError.message.includes('policy')) {
+                setError('Access denied. RLS policies may be blocking profile access.')
+              } else {
+                setError(`Failed to load profile: ${profileError.message}`)
+              }
+              setLoading(false)
+              return
+            }
+            
+            if (profileData?.role === 'admin') {
+              navigate('/admin/overview', { replace: true })
+            } else if (profileData?.role === 'sales') {
+              navigate('/admin/sales', { replace: true })
+            } else if (profileData?.role === 'partner') {
+              navigate('/partner/dashboard', { replace: true })
+            } else {
+              setError('Invalid user role. Please contact administrator.')
+              setLoading(false)
+            }
           }, 500)
         }
       }
@@ -61,15 +91,14 @@ export default function Login() {
               <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
             </svg>
           </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">Sunny Admin</h1>
-          <p className="text-slate-400 mt-2">Bread Sales Management Dashboard</p>
+          <h1 className="text-3xl font-bold text-white tracking-tight">Sunny</h1>
+          <p className="text-slate-400 mt-2">Dashboard</p>
         </div>
 
         {/* Login Card */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-xl">
           <div className="mb-6">
-            <h2 className="text-xl font-semibold text-white">Welcome back</h2>
-            <p className="text-slate-400 text-sm mt-1">Sign in to access your dashboard</p>
+            <h2 className="text-xl font-semibold text-white">Sign in</h2>
           </div>
 
           {!supabaseConfigured && (
@@ -79,8 +108,8 @@ export default function Login() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
                 <div>
-                  <p className="text-amber-400 text-sm font-medium">Supabase not configured</p>
-                  <p className="text-amber-300/80 text-xs mt-1">Create a .env file with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY</p>
+                  <p className="text-amber-400 text-sm font-medium">Supabase missing</p>
+                  <p className="text-amber-300/80 text-xs mt-1">Add `.env` keys.</p>
                 </div>
               </div>
             </div>
@@ -100,7 +129,7 @@ export default function Login() {
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-slate-300 mb-2">
-                Email address
+                Email
               </label>
               <input
                 id="email"
@@ -146,17 +175,16 @@ export default function Login() {
 
           <div className="mt-6 pt-6 border-t border-slate-800">
             <p className="text-xs text-slate-500 text-center">
-              Admin access only. Contact system administrator for credentials.
+              Admin only.
             </p>
           </div>
         </div>
 
         {/* Footer */}
         <p className="text-center text-slate-600 text-sm mt-8">
-          © {new Date().getFullYear()} Sunny Bread Sales. All rights reserved.
+          © {new Date().getFullYear()} Sunny
         </p>
       </div>
     </div>
   )
 }
-

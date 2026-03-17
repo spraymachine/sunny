@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import KPICard from '../components/KPICard'
-import AlertBanner from '../components/AlertBanner'
+import { formatDateDDMMYY } from '../lib/date'
 
 export default function CTA() {
   const [alerts, setAlerts] = useState([])
-  const [trainers, setTrainers] = useState([])
+  const [partners, setPartners] = useState([])
   const [loading, setLoading] = useState(true)
-  const [trainerFilter, setTrainerFilter] = useState('all')
+  const [partnerFilter, setPartnerFilter] = useState('all')
   const [colorFilter, setColorFilter] = useState('all')
   const [dateRange, setDateRange] = useState({ start: '', end: '' })
 
@@ -15,26 +15,96 @@ export default function CTA() {
     fetchData()
   }, [])
 
+  const formatPhoneNumber = (contact) => {
+    if (!contact) return null
+    // Remove all non-digit characters except + for international numbers
+    return contact.replace(/[^\d+]/g, '')
+  }
+
+  const handleCallPartner = (contact) => {
+    const phoneNumber = formatPhoneNumber(contact)
+    if (!phoneNumber) {
+      alert('No contact number available for this partner')
+      return
+    }
+    window.location.href = `tel:${phoneNumber}`
+  }
+
   const fetchData = async () => {
     try {
-      // Fetch expiry alerts view
-      const { data: alertsData, error: alertsError } = await supabase
-        .from('expiry_alerts')
-        .select('*')
-        .order('days_until_expiry', { ascending: true })
+      // Fetch sales with partner info and date_of_assignment
+      const { data: salesData, error: salesError } = await supabase
+        .from('sales')
+        .select(`
+          *,
+          trainers:profiles (
+            id,
+            name:full_name,
+            contact:phone_number,
+            email
+          )
+        `)
+        .order('date_of_assignment', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: true })
 
-      if (alertsError) throw alertsError
+      if (salesError) throw salesError
 
-      // Fetch trainers for filter
-      const { data: trainersData, error: trainersError } = await supabase
-        .from('trainers')
-        .select('id, name')
-        .order('name')
+      // Transform sales data to alerts format
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      
+      const alertsData = (salesData || [])
+        .filter(sale => {
+          // Only show active sales with remaining unsold units
+          const unsoldUnits = (sale.units_assigned || 0) - (sale.units_sold || 0) - (sale.retracted_units || 0)
+          if (!(unsoldUnits > 0 && sale.date_of_assignment)) return false
+          
+          // Only show cards within 7 days from date of assignment
+          const assignmentDate = new Date(sale.date_of_assignment)
+          assignmentDate.setHours(0, 0, 0, 0)
+          const diffTime = today - assignmentDate
+          const daysSinceAssignment = Math.floor(diffTime / (1000 * 60 * 60 * 24))
+          
+          // Filter to only show cards within 7 days (including today = 0, up to 7 days)
+          return daysSinceAssignment >= 0 && daysSinceAssignment <= 7
+        })
+        .map(sale => {
+          const assignmentDate = new Date(sale.date_of_assignment)
+          assignmentDate.setHours(0, 0, 0, 0)
+          const diffTime = today - assignmentDate
+          const daysSinceAssignment = Math.floor(diffTime / (1000 * 60 * 60 * 24))
+          const trainerName = sale.trainers?.name || sale.trainers?.email || sale.trainers?.contact || (sale.trainer_id ? `Partner (${sale.trainer_id.slice(0, 8)})` : 'N/A')
+          const trainerContact = sale.trainers?.contact || sale.trainers?.email || ''
+          
+          return {
+            sale_id: sale.id,
+            trainer_id: sale.trainer_id,
+            trainer_name: trainerName,
+            trainer_contact: trainerContact,
+            buyer_name: sale.buyer_name,
+            units_assigned: sale.units_assigned || 0,
+            units_sold: sale.units_sold || 0,
+            retracted_units: sale.retracted_units || 0,
+            unsold_units: (sale.units_assigned || 0) - (sale.units_sold || 0) - (sale.retracted_units || 0),
+            date_of_assignment: sale.date_of_assignment,
+            days_since_assignment: daysSinceAssignment,
+          }
+        })
 
-      if (trainersError) throw trainersError
+      // Fetch partners for filter
+      const { data: partnersData, error: partnersError } = await supabase
+        .from('profiles')
+        .select('id, full_name, email')
+        .eq('role', 'partner')
+        .order('full_name', { ascending: true, nullsFirst: false })
 
-      setAlerts(alertsData || [])
-      setTrainers(trainersData || [])
+      if (partnersError) throw partnersError
+
+      setAlerts(alertsData)
+      setPartners((partnersData || []).map((partner) => ({
+        id: partner.id,
+        name: partner.full_name || partner.email || 'N/A',
+      })))
     } catch (error) {
       console.error('Error fetching data:', error)
     } finally {
@@ -42,112 +112,84 @@ export default function CTA() {
     }
   }
 
-  // Calculate alert status based on days until expiry
-  const getAlertStatus = (daysUntilExpiry) => {
-    if (daysUntilExpiry <= 1) return 'red'
-    if (daysUntilExpiry === 2) return 'yellow'
-    return 'green'
+  // Calculate alert status based on days since assignment
+  // Green: within 2 days of assignment (including assignment day: 0, 1, 2)
+  // Red: post 2 days (3+ days since assignment)
+  const getAlertStatus = (daysSinceAssignment) => {
+    if (daysSinceAssignment <= 2) return 'green' // Within 2 days (including assignment day)
+    return 'red' // Post 2 days (warning)
   }
 
   // Filter alerts
   const filteredAlerts = alerts.filter((alert) => {
-    // Trainer filter
-    if (trainerFilter !== 'all' && alert.trainer_id !== trainerFilter) return false
+    // Partner filter
+    if (partnerFilter !== 'all' && alert.trainer_id !== partnerFilter) return false
 
     // Color filter
-    const status = getAlertStatus(alert.days_until_expiry)
+    const status = getAlertStatus(alert.days_since_assignment)
     if (colorFilter !== 'all' && status !== colorFilter) return false
 
     // Date range filter
-    if (dateRange.start && new Date(alert.expiry_date) < new Date(dateRange.start)) return false
-    if (dateRange.end && new Date(alert.expiry_date) > new Date(dateRange.end)) return false
+    if (dateRange.start && new Date(alert.date_of_assignment) < new Date(dateRange.start)) return false
+    if (dateRange.end && new Date(alert.date_of_assignment) > new Date(dateRange.end)) return false
 
     return true
   })
 
   // Calculate KPIs
-  const redAlerts = alerts.filter(a => getAlertStatus(a.days_until_expiry) === 'red').length
-  const yellowAlerts = alerts.filter(a => getAlertStatus(a.days_until_expiry) === 'yellow').length
-  const greenAlerts = alerts.filter(a => getAlertStatus(a.days_until_expiry) === 'green').length
+  const redAlerts = alerts.filter(a => getAlertStatus(a.days_since_assignment) === 'red').length
+  const greenAlerts = alerts.filter(a => getAlertStatus(a.days_since_assignment) === 'green').length
+  const activeSales = alerts.length
   const totalUnsold = alerts.reduce((sum, a) => sum + (a.unsold_units || 0), 0)
 
   const getStatusStyles = (status) => {
     switch (status) {
       case 'red':
         return {
-          bg: 'bg-rose-500/10 border-rose-500/30',
-          badge: 'bg-rose-500',
-          text: 'text-rose-400',
-          glow: 'shadow-rose-500/20',
+          bg: 'border-[#844156]/45 bg-[linear-gradient(135deg,rgba(113,35,58,0.36),rgba(37,12,23,0.78))]',
+          badge: 'bg-[#d77a94]',
+          text: 'text-[#ffd9e3]',
         }
-      case 'yellow':
+      default: // green
         return {
-          bg: 'bg-amber-500/10 border-amber-500/30',
-          badge: 'bg-amber-500',
-          text: 'text-amber-400',
-          glow: 'shadow-amber-500/20',
-        }
-      default:
-        return {
-          bg: 'bg-emerald-500/10 border-emerald-500/30',
-          badge: 'bg-emerald-500',
-          text: 'text-emerald-400',
-          glow: 'shadow-emerald-500/20',
+          bg: 'border-[#63bf99]/45 bg-[linear-gradient(135deg,rgba(46,118,89,0.34),rgba(11,36,28,0.78))]',
+          badge: 'bg-[#7fe0b7]',
+          text: 'text-[#e0fff2]',
         }
     }
   }
 
   if (loading) {
     return (
-      <div className="p-8 flex items-center justify-center min-h-screen">
-        <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+      <div className="dashboard-page flex min-h-screen items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-400 border-t-transparent"></div>
       </div>
     )
   }
 
   return (
-    <div className="p-8">
+    <div className="dashboard-page">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white mb-2">CTA Dashboard</h1>
-        <p className="text-slate-400">Operations control with traffic light expiry alerts</p>
+      <div className="relative z-10 mb-8">
+        <div>
+          <h1 className="dashboard-title">CTA</h1>
+        </div>
       </div>
 
-      {/* Critical Alert Banner */}
-      {redAlerts > 0 && (
-        <div className="mb-6">
-          <AlertBanner
-            type="error"
-            title={`🚨 ${redAlerts} Critical Alert${redAlerts > 1 ? 's' : ''}!`}
-            message="Items are expiring within 1 day with unsold stock. Immediate action required!"
-          />
-        </div>
-      )}
-
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <KPICard
-          title="🔴 Critical (≤1 day)"
-          value={redAlerts}
-          color="rose"
+          title="Active"
+          value={activeSales}
+          color="indigo"
           icon={
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-6m3 6V7m3 10v-4m5 8H4a2 2 0 01-2-2V5a2 2 0 012-2h16a2 2 0 012 2v14a2 2 0 01-2 2z" />
             </svg>
           }
         />
         <KPICard
-          title="🟡 Warning (2 days)"
-          value={yellowAlerts}
-          color="amber"
-          icon={
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          }
-        />
-        <KPICard
-          title="🟢 Safe (>3 days)"
+          title="Safe"
           value={greenAlerts}
           color="emerald"
           icon={
@@ -157,7 +199,17 @@ export default function CTA() {
           }
         />
         <KPICard
-          title="Total Unsold Units"
+          title="Unsafe"
+          value={redAlerts}
+          color="rose"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          }
+        />
+        <KPICard
+          title="Unsold"
           value={totalUnsold.toLocaleString()}
           color="indigo"
           icon={
@@ -168,47 +220,19 @@ export default function CTA() {
         />
       </div>
 
-      {/* Traffic Light Legend */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-8">
-        <h3 className="text-lg font-semibold text-white mb-4">Traffic Light System</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="flex items-center gap-4 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
-            <div className="w-8 h-8 bg-emerald-500 rounded-full shadow-lg shadow-emerald-500/50 animate-pulse"></div>
-            <div>
-              <p className="font-semibold text-emerald-400">Green - Safe</p>
-              <p className="text-sm text-slate-400">More than 3 days remaining</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-4 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg">
-            <div className="w-8 h-8 bg-amber-500 rounded-full shadow-lg shadow-amber-500/50 animate-pulse"></div>
-            <div>
-              <p className="font-semibold text-amber-400">Yellow - Warning</p>
-              <p className="text-sm text-slate-400">2 days remaining</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-4 p-4 bg-rose-500/10 border border-rose-500/30 rounded-lg">
-            <div className="w-8 h-8 bg-rose-500 rounded-full shadow-lg shadow-rose-500/50 animate-pulse"></div>
-            <div>
-              <p className="font-semibold text-rose-400">Red - Critical</p>
-              <p className="text-sm text-slate-400">1 day or less remaining</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* Filters */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-6">
+      <div className="dashboard-panel mb-6 rounded-[30px] p-4 sm:p-5">
         <div className="flex flex-wrap items-center gap-4">
-          {/* Trainer Filter */}
+          {/* Partner Filter */}
           <select
-            value={trainerFilter}
-            onChange={(e) => setTrainerFilter(e.target.value)}
-            className="px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            value={partnerFilter}
+            onChange={(e) => setPartnerFilter(e.target.value)}
+            className="dashboard-select min-w-[180px]"
           >
-            <option value="all">All Trainers</option>
-            {trainers.map((trainer) => (
-              <option key={trainer.id} value={trainer.id}>
-                {trainer.name}
+            <option value="all">All</option>
+            {partners.map((partner) => (
+              <option key={partner.id} value={partner.id}>
+                {partner.name}
               </option>
             ))}
           </select>
@@ -217,12 +241,11 @@ export default function CTA() {
           <select
             value={colorFilter}
             onChange={(e) => setColorFilter(e.target.value)}
-            className="px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="dashboard-select min-w-[180px]"
           >
-            <option value="all">All Status</option>
-            <option value="red">🔴 Critical</option>
-            <option value="yellow">🟡 Warning</option>
-            <option value="green">🟢 Safe</option>
+            <option value="all">All</option>
+            <option value="green">Safe</option>
+            <option value="red">Unsafe</option>
           </select>
 
           {/* Date Range */}
@@ -232,7 +255,7 @@ export default function CTA() {
               type="date"
               value={dateRange.start}
               onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
-              className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="dashboard-input"
             />
           </div>
           <div className="flex items-center gap-2">
@@ -241,30 +264,30 @@ export default function CTA() {
               type="date"
               value={dateRange.end}
               onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
-              className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="dashboard-input"
             />
           </div>
 
           {/* Clear Filters */}
-          {(trainerFilter !== 'all' || colorFilter !== 'all' || dateRange.start || dateRange.end) && (
-            <button
-              onClick={() => {
-                setTrainerFilter('all')
-                setColorFilter('all')
-                setDateRange({ start: '', end: '' })
-              }}
-              className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors"
-            >
-              Clear filters
-            </button>
-          )}
-        </div>
+          {(partnerFilter !== 'all' || colorFilter !== 'all' || dateRange.start || dateRange.end) && (
+              <button
+                onClick={() => {
+                  setPartnerFilter('all')
+                  setColorFilter('all')
+                  setDateRange({ start: '', end: '' })
+                }}
+                className="dashboard-button dashboard-button-secondary px-4 py-2 text-sm"
+              >
+                Clear
+              </button>
+            )}
+          </div>
       </div>
 
       {/* Alerts Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredAlerts.length === 0 ? (
-          <div className="col-span-full bg-slate-900 border border-slate-800 rounded-xl p-12 text-center">
+          <div className="dashboard-panel col-span-full rounded-[30px] p-12 text-center">
             <svg className="w-16 h-16 text-slate-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
@@ -272,28 +295,29 @@ export default function CTA() {
           </div>
         ) : (
           filteredAlerts.map((alert) => {
-            const status = getAlertStatus(alert.days_until_expiry)
+            const status = getAlertStatus(alert.days_since_assignment)
             const styles = getStatusStyles(status)
             
             return (
               <div
                 key={alert.sale_id}
-                className={`${styles.bg} border rounded-xl p-5 shadow-lg ${styles.glow} transition-all duration-300 hover:scale-[1.02]`}
+                onClick={() => handleCallPartner(alert.trainer_contact)}
+                className={`${styles.bg} cursor-pointer rounded-[28px] border p-5 shadow-[0_24px_50px_rgba(2,6,23,0.28)] backdrop-blur-2xl transition-all duration-300 hover:-translate-y-1`}
               >
                 {/* Traffic Light Indicator */}
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3">
-                    <div className={`w-4 h-4 ${styles.badge} rounded-full shadow-lg animate-pulse`}></div>
+                    <div className={`h-3 w-3 ${styles.badge} rounded-full shadow-lg`}></div>
                     <span className={`text-sm font-semibold uppercase tracking-wide ${styles.text}`}>
-                      {status === 'red' ? 'Critical' : status === 'yellow' ? 'Warning' : 'Safe'}
+                      {status === 'red' ? 'Unsafe' : 'Safe'}
                     </span>
                   </div>
-                  <span className={`px-3 py-1 text-xs font-bold rounded-full ${styles.badge} text-white`}>
-                    {alert.days_until_expiry <= 0 ? 'EXPIRED' : `${alert.days_until_expiry}d left`}
+                  <span className="rounded-full border border-white/8 bg-white/[0.05] px-3 py-1 text-xs font-semibold text-slate-300">
+                    {alert.days_since_assignment === 0 ? 'Today' : alert.days_since_assignment > 0 ? `${alert.days_since_assignment}d ago` : `${Math.abs(alert.days_since_assignment)}d ahead`}
                   </span>
                 </div>
 
-                {/* Trainer Info */}
+                {/* Partner Info */}
                 <div className="mb-4">
                   <p className="font-semibold text-white text-lg">{alert.trainer_name}</p>
                   <p className="text-sm text-slate-400">{alert.trainer_contact}</p>
@@ -301,34 +325,23 @@ export default function CTA() {
 
                 {/* Stats */}
                 <div className="grid grid-cols-2 gap-3 mb-4">
-                  <div className="bg-slate-800/50 rounded-lg p-3">
+                  <div className="dashboard-subpanel rounded-[20px] p-3">
                     <p className="text-xs text-slate-500 uppercase tracking-wide">Assigned</p>
                     <p className="text-xl font-bold text-white">{alert.units_assigned}</p>
                   </div>
-                  <div className="bg-slate-800/50 rounded-lg p-3">
+                  <div className="dashboard-subpanel rounded-[20px] p-3">
                     <p className="text-xs text-slate-500 uppercase tracking-wide">Unsold</p>
                     <p className={`text-xl font-bold ${styles.text}`}>{alert.unsold_units}</p>
                   </div>
                 </div>
 
-                {/* Expiry Date */}
-                <div className="flex items-center justify-between pt-3 border-t border-slate-700/50">
-                  <span className="text-sm text-slate-400">Expiry Date</span>
+                {/* Date */}
+                <div className="flex items-center justify-between border-t border-white/8 pt-3">
+                  <span className="text-sm text-slate-400">Date</span>
                   <span className={`text-sm font-medium ${styles.text}`}>
-                    {new Date(alert.expiry_date).toLocaleDateString('en-US', {
-                      weekday: 'short',
-                      month: 'short',
-                      day: 'numeric',
-                    })}
+                    {formatDateDDMMYY(alert.date_of_assignment)}
                   </span>
                 </div>
-
-                {/* Buyer Info */}
-                {alert.buyer_name && (
-                  <div className="mt-3 pt-3 border-t border-slate-700/50">
-                    <p className="text-xs text-slate-500">Buyer: {alert.buyer_name}</p>
-                  </div>
-                )}
               </div>
             )
           })
@@ -337,4 +350,3 @@ export default function CTA() {
     </div>
   )
 }
-

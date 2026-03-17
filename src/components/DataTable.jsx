@@ -9,14 +9,14 @@ export default function DataTable({ columns, data, onSort, sortField, sortDirect
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead className="sticky top-0 bg-slate-900 z-10">
+      <table className="dashboard-table w-full min-w-[720px]">
+        <thead className="sticky top-0 z-10 backdrop-blur-xl">
           <tr>
             {columns.map((column) => (
               <th
                 key={column.key}
-                className={`px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800 ${
-                  column.sortable ? 'cursor-pointer hover:text-white transition-colors' : ''
+                className={`border-b border-white/8 px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500 ${
+                  column.sortable ? 'cursor-pointer transition-colors hover:text-white' : ''
                 }`}
                 onClick={() => column.sortable && handleSort(column.key)}
               >
@@ -48,12 +48,12 @@ export default function DataTable({ columns, data, onSort, sortField, sortDirect
             data.map((row, rowIndex) => (
               <tr
                 key={row.id || rowIndex}
-                className={`hover:bg-slate-800/50 transition-colors ${
+                className={`border-b border-white/6 last:border-b-0 ${
                   rowClassName ? rowClassName(row) : ''
                 }`}
               >
                 {columns.map((column) => (
-                  <td key={column.key} className="px-4 py-3 text-sm text-slate-300">
+                  <td key={column.key} className="px-4 py-3.5 text-sm text-slate-300">
                     {column.render ? column.render(row[column.key], row) : row[column.key]}
                   </td>
                 ))}
@@ -65,4 +65,3 @@ export default function DataTable({ columns, data, onSort, sortField, sortDirect
     </div>
   )
 }
-
